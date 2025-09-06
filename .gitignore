@@ -12,3 +12,10 @@ __pycache__/
 *$py.class
 .pytest_cache/
 .mypy_cache/
+GMAIL_API_SETUP.md
+# Backend secrets
+backend/.env
+backend/credentials.json
+
+# Docs
+GMAIL_SETUP.md

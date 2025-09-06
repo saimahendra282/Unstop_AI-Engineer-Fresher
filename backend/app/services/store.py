@@ -8,6 +8,14 @@ EMAILS: Dict[str, Dict[str, Any]] = {}
 RESPONSES: Dict[str, Dict[str, Any]] = {}
 
 
+def clear_all_data():
+    """Clear all stored emails and responses - useful for testing"""
+    global EMAILS, RESPONSES
+    EMAILS.clear()
+    RESPONSES.clear()
+    return {"cleared_emails": True, "cleared_responses": True}
+
+
 def upsert_email(doc: Dict[str, Any]) -> str:
     eid = doc.get('id') or doc.get('_id') or str(uuid.uuid4())
     doc['id'] = eid

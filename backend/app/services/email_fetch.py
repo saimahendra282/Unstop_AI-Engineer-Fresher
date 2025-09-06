@@ -10,12 +10,20 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from ..config import get_settings
-from .nlp import analyze_email
 from .store import upsert_email
 
 # Gmail API scopes
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
-FILTER_KEYWORDS = ["support", "query", "request", "help"]
+FILTER_KEYWORDS = {
+    "support": ["support", "customer support", "tech support", "help desk"],
+    "query": ["query", "question", "inquiry", "ask", "clarification"],
+    "request": ["request", "please", "need", "require", "can you"],
+    "urgent": ["urgent", "asap", "immediately", "critical", "emergency", "priority"],
+    "help": ["help", "assistance", "guide", "how to", "tutorial"],
+    "billing": ["billing", "payment", "invoice", "refund", "charge"],
+    "technical": ["error", "bug", "issue", "problem", "not working", "broken"],
+    "account": ["account", "login", "password", "access", "profile"]
+}
 
 
 def _hash_message_id(raw: str) -> str:
@@ -113,8 +121,8 @@ def _extract_email_body(payload) -> str:
     return '\n'.join(body_parts)[:10000]  # Limit body size
 
 
-def fetch_from_gmail_inbox(limit: int | None = None) -> dict:
-    """Fetch real emails from Gmail inbox using Gmail API"""
+def fetch_from_gmail_inbox(limit: int | None = None, filter_category: str = "all") -> dict:
+    """Fetch real emails from Gmail inbox using Gmail API with advanced filtering"""
     settings = get_settings()
     
     service, error = _get_gmail_service()
@@ -122,25 +130,57 @@ def fetch_from_gmail_inbox(limit: int | None = None) -> dict:
         return {"fetched": 0, "stored": 0, "reason": error}
     
     try:
-        # Build search query for support-related emails
-        query_parts = [f'subject:"{keyword}"' for keyword in FILTER_KEYWORDS]
-        search_query = ' OR '.join(query_parts)
+        # Build search query based on filter category
+        if filter_category == "all":
+            # Search for any support-related emails from all categories
+            all_keywords = []
+            for category_keywords in FILTER_KEYWORDS.values():
+                all_keywords.extend(category_keywords[:2])  # Take first 2 keywords per category
+            query_parts = [f'subject:"{keyword}"' for keyword in all_keywords[:15]]  # Limit query length
+            search_query = ' OR '.join(query_parts)
+        else:
+            # Search for specific category
+            if filter_category in FILTER_KEYWORDS:
+                category_keywords = FILTER_KEYWORDS[filter_category]
+                query_parts = [f'subject:"{keyword}"' for keyword in category_keywords]
+                search_query = ' OR '.join(query_parts)
+            else:
+                return {"fetched": 0, "stored": 0, "reason": f"Invalid filter category: {filter_category}"}
         
-        # Get message IDs
+        # ULTRA FRESH MODE: Get emails from the last few minutes! 🔥
+        # Gmail's after: operator supports different formats, let's try the most recent
+        from datetime import datetime, timedelta
+        
+        # Get FRESH emails - fetch 50 most recent, then sort by newest first
+        from datetime import datetime, timedelta
+        
+        # Get emails from today to capture recent ones
+        today = datetime.now().strftime('%Y/%m/%d')
+        final_query = f'in:inbox ({search_query}) after:{today}'
+        
+        print(f"🔥 FETCHING FRESH EMAILS: Getting 50 most recent emails and sorting newest first")
+        
+        print(f"🔍 Gmail Search Query: {final_query}")
+        
+        # Get message IDs (get 50 recent emails, Gmail sorts newest first)
         results = service.users().messages().list(
             userId='me',
-            q=search_query,
-            maxResults=limit or 50
+            q=final_query,
+            maxResults=50  # Get 50 recent emails
         ).execute()
         
         messages = results.get('messages', [])
         
         if not messages:
-            return {"fetched": 0, "stored": 0, "reason": "No support emails found"}
+            return {"fetched": 0, "stored": 0, "reason": f"No emails found for filter: {filter_category}"}
+        
+        print(f"📧 Found {len(messages)} emails, processing newest first")
         
         fetched = 0
         stored = 0
+        emails_with_timestamps = []  # Store emails with timestamps for sorting
         
+        # Process each message and collect with timestamps
         for message in messages:
             try:
                 # Get full message details
@@ -157,9 +197,18 @@ def fetch_from_gmail_inbox(limit: int | None = None) -> dict:
                 sender = headers.get('From', '').strip()
                 date_str = headers.get('Date', '')
                 
-                # Double-check subject filtering
-                if not any(k.lower() in subject.lower() for k in FILTER_KEYWORDS):
-                    continue
+                # Double-check filter match (Gmail search might be broad)
+                if filter_category != "all":
+                    category_keywords = FILTER_KEYWORDS.get(filter_category, [])
+                    if not any(keyword.lower() in subject.lower() for keyword in category_keywords):
+                        continue
+                else:
+                    # For "all" filter, check if subject contains any support keywords
+                    all_keywords = []
+                    for cat_keywords in FILTER_KEYWORDS.values():
+                        all_keywords.extend(cat_keywords)
+                    if not any(keyword.lower() in subject.lower() for keyword in all_keywords):
+                        continue
                 
                 # Extract message ID
                 message_id = headers.get('Message-ID') or _hash_message_id(sender + subject)
@@ -178,34 +227,72 @@ def fetch_from_gmail_inbox(limit: int | None = None) -> dict:
                     except Exception:
                         pass
                 
+                # Calculate how fresh this email is
+                current_time = datetime.now(timezone.utc)
+                time_diff = current_time - received_at
+                print(f"🔥 Email found! From {received_at.strftime('%Y-%m-%d %H:%M:%S')} ({time_diff.total_seconds():.0f} seconds ago)")
+                
                 fetched += 1
                 
-                # Analyze email
-                analysis = analyze_email(subject, body, sender)
+                # Determine matched category for this email
+                matched_category = filter_category if filter_category != "all" else "general"
+                if filter_category == "all":
+                    # Find best matching category
+                    for cat, keywords in FILTER_KEYWORDS.items():
+                        if any(keyword.lower() in subject.lower() for keyword in keywords):
+                            matched_category = cat
+                            break
                 
-                # Store email
+                # Analyze email using same simple analysis as CSV for consistency
+                from .nlp import simple_sentiment, urgency, extract_info
+                sent = simple_sentiment(body)
+                urg, reason = urgency(body + ' ' + subject)
+                phones, emails, phrases = extract_info(body)
+                priority_score = (5 if urg == 'urgent' else 0) + (2 if sent == 'negative' else 0)
+                
+                # Create email data
                 email_data = {
                     "message_id": message_id,
                     "subject": subject,
                     "sender": sender,
                     "body": body,
                     "received_at": received_at,
-                    "priority": analysis["priority"],
-                    "sentiment": analysis["sentiment"],
-                    "category": analysis["category"],
-                    "status": "new"
+                    "sentiment": sent,
+                    "priority": urg,
+                    "priority_score": priority_score,
+                    "matched_category": matched_category,
+                    "extraction": {
+                        "phones": phones,
+                        "emails": emails,
+                        "key_phrases": phrases,
+                        "sentiment": sent,
+                        "urgency_reason": reason
+                    },
+                    "status": "pending"
                 }
                 
-                if upsert_email(email_data):
-                    stored += 1
+                # Add to collection with timestamp for sorting
+                emails_with_timestamps.append((received_at, email_data))
                     
             except Exception as e:
                 print(f"Error processing message {message.get('id', 'unknown')}: {e}")
                 continue
         
+        # Sort emails by timestamp (newest first) and store them
+        emails_with_timestamps.sort(key=lambda x: x[0], reverse=True)
+        print(f"🔥 Sorting {len(emails_with_timestamps)} emails by newest first")
+        
+        for received_at, email_data in emails_with_timestamps:
+            if upsert_email(email_data):
+                stored += 1
+                current_time = datetime.now(timezone.utc)
+                time_diff = current_time - received_at
+                print(f"✅ Stored email from {received_at.strftime('%Y-%m-%d %H:%M:%S')} ({time_diff.total_seconds():.0f} seconds ago)")
+        
         return {
             "fetched": fetched,
             "stored": stored,
+            "filter_category": filter_category,
             "reason": "success"
         }
         

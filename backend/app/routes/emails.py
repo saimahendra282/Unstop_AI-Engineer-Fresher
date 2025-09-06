@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from ..services.csv_ingest import load_csv
 from ..services.email_fetch import fetch_from_gmail_inbox
-from ..services.store import list_emails_sorted, get_email, add_response
+from ..services.store import list_emails_sorted, get_email, add_response, clear_all_data
 from ..services.response import generate_draft
 from ..services.email_send import send_email_reply, send_bulk_replies
 from ..config import get_settings
@@ -9,15 +9,32 @@ from ..services.store import compute_stats
 
 router = APIRouter(prefix="/emails", tags=["emails"])
 
+@router.post('/clear')
+async def clear_data():
+    """Clear all stored email data"""
+    return clear_all_data()
+
 @router.post('/load_csv')
 async def load_from_csv(path: str | None = None):
     settings = get_settings()
     return load_csv(path or settings.csv_path)
 
+@router.get('/filters')
+async def get_filter_categories():
+    """Get available email filter categories"""
+    from ..services.email_fetch import FILTER_KEYWORDS
+    return {
+        "categories": list(FILTER_KEYWORDS.keys()),
+        "category_details": {
+            cat: {"keywords": keywords, "display_name": cat.replace("_", " ").title()}
+            for cat, keywords in FILTER_KEYWORDS.items()
+        }
+    }
+
 @router.post('/load_inbox')
-async def load_from_inbox(limit: int = 50):
-    """Load support emails from Gmail inbox using IMAP"""
-    return fetch_from_gmail_inbox(limit=limit)
+async def load_from_inbox(limit: int = 100, filter_category: str = "all"):
+    """Load support emails from Gmail inbox using Gmail API with category filtering"""
+    return fetch_from_gmail_inbox(limit=limit, filter_category=filter_category)
 
 @router.get('/')
 async def list_emails(limit: int = 50):
