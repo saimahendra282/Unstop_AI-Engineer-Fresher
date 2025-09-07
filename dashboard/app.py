@@ -7,7 +7,7 @@ API_BASE = os.environ.get('API_BASE', 'http://localhost:8000')
 
 st.set_page_config(page_title="Support AI Inbox", layout="wide")
 
-st.title("🔥 AI-Powered Support Inbox - GOD MODE")
+st.title(" AI-Powered Support Inbox ")
 
 # Get available filter categories
 try:
