@@ -151,22 +151,19 @@ def fetch_from_gmail_inbox(limit: int | None = None, filter_category: str = "all
         # Gmail's after: operator supports different formats, let's try the most recent
         from datetime import datetime, timedelta
         
-        # Get FRESH emails - fetch 50 most recent, then sort by newest first
-        from datetime import datetime, timedelta
+        # Get FRESH emails naturally - no timestamp restrictions!
+        # Just fetch emails in natural order (newest to oldest)
+        final_query = f'in:inbox ({search_query})'
         
-        # Get emails from today to capture recent ones
-        today = datetime.now().strftime('%Y/%m/%d')
-        final_query = f'in:inbox ({search_query}) after:{today}'
+        print(f"FETCHING EMAILS: Getting 50 emails naturally ordered newest to oldest")
         
-        print(f"🔥 FETCHING FRESH EMAILS: Getting 50 most recent emails and sorting newest first")
+        print(f"Gmail Search Query: {final_query}")
         
-        print(f"🔍 Gmail Search Query: {final_query}")
-        
-        # Get message IDs (get 50 recent emails, Gmail sorts newest first)
+        # Get message IDs (Gmail naturally returns newest first, get 50)
         results = service.users().messages().list(
             userId='me',
             q=final_query,
-            maxResults=50  # Get 50 recent emails
+            maxResults=50  # Get 50 emails naturally ordered
         ).execute()
         
         messages = results.get('messages', [])
@@ -174,13 +171,12 @@ def fetch_from_gmail_inbox(limit: int | None = None, filter_category: str = "all
         if not messages:
             return {"fetched": 0, "stored": 0, "reason": f"No emails found for filter: {filter_category}"}
         
-        print(f"📧 Found {len(messages)} emails, processing newest first")
+        print(f"Found {len(messages)} emails, processing in natural order (newest first)")
         
         fetched = 0
         stored = 0
-        emails_with_timestamps = []  # Store emails with timestamps for sorting
         
-        # Process each message and collect with timestamps
+        # Process each message in natural order (Gmail already sorts newest first)
         for message in messages:
             try:
                 # Get full message details
@@ -227,10 +223,10 @@ def fetch_from_gmail_inbox(limit: int | None = None, filter_category: str = "all
                     except Exception:
                         pass
                 
-                # Calculate how fresh this email is
+                # Show email info without time restrictions
                 current_time = datetime.now(timezone.utc)
                 time_diff = current_time - received_at
-                print(f"🔥 Email found! From {received_at.strftime('%Y-%m-%d %H:%M:%S')} ({time_diff.total_seconds():.0f} seconds ago)")
+                print(f"Email found! From {received_at.strftime('%Y-%m-%d %H:%M:%S')} ({time_diff.total_seconds()//3600:.0f} hours ago)")
                 
                 fetched += 1
                 
@@ -271,23 +267,14 @@ def fetch_from_gmail_inbox(limit: int | None = None, filter_category: str = "all
                     "status": "pending"
                 }
                 
-                # Add to collection with timestamp for sorting
-                emails_with_timestamps.append((received_at, email_data))
+                # Store email directly (Gmail already gives us newest first)
+                if upsert_email(email_data):
+                    stored += 1
+                    print(f"Stored email from {received_at.strftime('%Y-%m-%d %H:%M:%S')}")
                     
             except Exception as e:
                 print(f"Error processing message {message.get('id', 'unknown')}: {e}")
                 continue
-        
-        # Sort emails by timestamp (newest first) and store them
-        emails_with_timestamps.sort(key=lambda x: x[0], reverse=True)
-        print(f"🔥 Sorting {len(emails_with_timestamps)} emails by newest first")
-        
-        for received_at, email_data in emails_with_timestamps:
-            if upsert_email(email_data):
-                stored += 1
-                current_time = datetime.now(timezone.utc)
-                time_diff = current_time - received_at
-                print(f"✅ Stored email from {received_at.strftime('%Y-%m-%d %H:%M:%S')} ({time_diff.total_seconds():.0f} seconds ago)")
         
         return {
             "fetched": fetched,

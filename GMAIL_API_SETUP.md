@@ -36,11 +36,11 @@ For immediate testing without Gmail API setup:
 # SMTP for sending replies (WORKING)
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587  
-SMTP_USER=bejawadasaimahendra@gmail.com
-SMTP_PASSWORD=nzfxccabstribtkg
+SMTP_USER=........@gmail.com
+SMTP_PASSWORD=.......
 
 # Gmail API for reading emails (NEEDS SETUP)
-GMAIL_USER=bejawadasaimahendra@gmail.com
+GMAIL_USER=........
 GMAIL_CREDENTIALS_PATH=credentials.json
 GMAIL_TOKEN_PATH=token.json
 ```
